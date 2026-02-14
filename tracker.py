@@ -39,7 +39,7 @@ HEADERS = {
 @dataclass
 class Product:
     name: str
-    url: str
+    urls: list[str]            # one or more URLs to monitor (product page + sale page)
     sizes: list[str]           # e.g. ["4", "6"] or ["XS", "S"]
     colors: list[str]          # preferred colors, for reference in email alerts
     max_price: Optional[float] # alert if price <= this (None = alert on any sale)
@@ -59,7 +59,8 @@ def load_products() -> list[Product]:
     return [
         Product(
             name=p["name"],
-            url=p["url"],
+            # support both "urls" (list) and legacy "url" (single string)
+            urls=p.get("urls") or ([p["url"]] if p.get("url") else []),
             sizes=p["sizes"],
             colors=p.get("colors") or [],
             max_price=p.get("max_price"),
@@ -82,16 +83,16 @@ def save_state(state: dict):
 
 # ── Scraping ───────────────────────────────────────────────────────────────────
 
-def fetch_product_info(product: Product) -> ProductState:
+def fetch_product_info(url: str, product_name: str) -> ProductState:
     """
-    Scrapes a Lululemon product page and returns available sizes + price.
+    Scrapes a single URL and returns available sizes + price.
     Lululemon renders product data in a JSON blob inside a <script> tag.
     """
     try:
-        resp = requests.get(product.url, headers=HEADERS, timeout=15)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
     except requests.RequestException as e:
-        print(f"  ⚠️  Failed to fetch {product.name}: {e}")
+        print(f"  ⚠️  Failed to fetch {url}: {e}")
         return ProductState(available_sizes=[], price=None)
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -156,7 +157,7 @@ def fetch_product_info(product: Product) -> ProductState:
     if price is None:
         price = _scrape_price_from_html(soup)
 
-    print(f"  📦 {product.name}: sizes={available_sizes} price=${price}")
+    print(f"  📦 {product_name} [{url.split('/')[4] if len(url.split('/')) > 4 else 'page'}]: sizes={available_sizes} price=${price}")
     return ProductState(available_sizes=available_sizes, price=price)
 
 
@@ -231,12 +232,18 @@ def should_alert(product: Product, state: ProductState, prev_state: Optional[dic
 
 # ── Email ──────────────────────────────────────────────────────────────────────
 
-def send_alert_email(product: Product, state: ProductState, reason: str):
+def send_alert_email(product: Product, state: ProductState, reason: str, alert_url: str):
     if not GMAIL_USER or not GMAIL_APP_PASS:
         print(f"  📧 [DRY RUN] Would email alert for: {product.name} — {reason}")
         return
 
     subject = f"🛍️ Lululemon Alert: {product.name} is available!"
+
+    # Build links for all tracked URLs
+    url_links = "".join(
+        f'<li><a href="{u}" style="color:#8B1A4A">{u}</a></li>'
+        for u in product.urls
+    )
 
     body_html = f"""
     <html><body style="font-family:sans-serif;max-width:600px;margin:auto">
@@ -249,9 +256,12 @@ def send_alert_email(product: Product, state: ProductState, reason: str):
         {'<li><strong>Your preferred colors:</strong> '+', '.join(product.colors)+'</li>' if product.colors else ''}
         <li><strong>Reason:</strong> {reason}</li>
       </ul>
-      <p><a href="{product.url}" style="background:#8B1A4A;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:8px">
-        View on Lululemon →
+      <p><strong>Found on:</strong></p>
+      <p><a href="{alert_url}" style="background:#8B1A4A;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:4px;margin-bottom:16px">
+        View Item →
       </a></p>
+      <p style="font-size:12px;color:#888">All tracked URLs for this item:</p>
+      <ul style="font-size:12px">{url_links}</ul>
       <p style="color:#888;font-size:12px;margin-top:24px">
         You're receiving this because you set up a Lululemon tracker.
         Use the tracker UI to update your wishlist, then re-export products.json.
@@ -283,24 +293,47 @@ def main():
     new_states = {}
 
     for product in products:
-        print(f"Checking: {product.name}")
-        state = fetch_product_info(product)
-        prev = prev_states.get(product.url)
+        print(f"Checking: {product.name} ({len(product.urls)} URL{'s' if len(product.urls) > 1 else ''})")
 
-        alert, reason = should_alert(product, state, prev)
+        # Check all URLs, merge results — alert if ANY url has the item available
+        merged_sizes: list[str] = []
+        merged_price: Optional[float] = None
+        alert_url = product.urls[0]
+
+        for url in product.urls:
+            state = fetch_product_info(url, product.name)
+
+            # Merge available sizes across all URLs
+            for s in state.available_sizes:
+                if s not in merged_sizes:
+                    merged_sizes.append(s)
+
+            # Take the lowest price found across URLs (most likely the sale price)
+            if state.price is not None:
+                if merged_price is None or state.price < merged_price:
+                    merged_price = state.price
+                    alert_url = url  # link to whichever URL has the best price
+
+            time.sleep(2)  # be polite between requests
+
+        merged_state = ProductState(available_sizes=merged_sizes, price=merged_price)
+
+        # Use a stable key (product name) for state tracking across URL changes
+        state_key = product.name
+        prev = prev_states.get(state_key)
+
+        alert, reason = should_alert(product, merged_state, prev)
 
         if alert:
             print(f"  🚨 ALERT: {reason}")
-            send_alert_email(product, state, reason)
+            send_alert_email(product, merged_state, reason, alert_url)
         else:
             print(f"  ✓  No alert: {reason}")
 
-        new_states[product.url] = {
-            "available_sizes": state.available_sizes,
-            "price": state.price,
+        new_states[state_key] = {
+            "available_sizes": merged_state.available_sizes,
+            "price": merged_state.price,
         }
-
-        time.sleep(2)  # be polite between requests
 
     save_state(new_states)
     print("\n✅ Done.")
