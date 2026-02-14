@@ -40,8 +40,9 @@ HEADERS = {
 class Product:
     name: str
     url: str
-    sizes: list[str]          # e.g. ["4", "6"] or ["XS", "S"]
-    max_price: Optional[float]  # alert if price <= this (None = alert on any sale)
+    sizes: list[str]           # e.g. ["4", "6"] or ["XS", "S"]
+    colors: list[str]          # preferred colors, for reference in email alerts
+    max_price: Optional[float] # alert if price <= this (None = alert on any sale)
 
 
 @dataclass
@@ -60,6 +61,7 @@ def load_products() -> list[Product]:
             name=p["name"],
             url=p["url"],
             sizes=p["sizes"],
+            colors=p.get("colors") or [],
             max_price=p.get("max_price"),
         )
         for p in data
@@ -244,14 +246,15 @@ def send_alert_email(product: Product, state: ProductState, reason: str):
         <li><strong>Available sizes:</strong> {', '.join([s for s in product.sizes if s in state.available_sizes])}</li>
         <li><strong>Current price:</strong> {'$'+f'{state.price:.2f}' if state.price else 'N/A'}</li>
         {'<li><strong>Your max price:</strong> $'+f'{product.max_price:.2f}</li>' if product.max_price else ''}
+        {'<li><strong>Your preferred colors:</strong> '+', '.join(product.colors)+'</li>' if product.colors else ''}
         <li><strong>Reason:</strong> {reason}</li>
       </ul>
       <p><a href="{product.url}" style="background:#8B1A4A;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;margin-top:8px">
         View on Lululemon →
       </a></p>
       <p style="color:#888;font-size:12px;margin-top:24px">
-        You're receiving this because you set up a Lululemon tracker. 
-        Edit <code>products.json</code> to change your tracked items.
+        You're receiving this because you set up a Lululemon tracker.
+        Use the tracker UI to update your wishlist, then re-export products.json.
       </p>
     </body></html>
     """
