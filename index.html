@@ -360,9 +360,15 @@
     </div>
 
     <div class="field">
-      <label>Product URL</label>
+      <label>Main Product URL</label>
       <input type="url" id="f-url" placeholder="https://www.lululemon.com/en-us/p/..." oninput="clearUrlError()" />
       <div class="field-error" id="url-error">Please paste a lululemon.com product URL</div>
+    </div>
+
+    <div class="field">
+      <label>Sale / WMTM URL <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+      <input type="url" id="f-url2" placeholder="https://shop.lululemon.com/c/we-made-too-much/..." />
+      <div class="field-hint">Add the sale page URL so the tracker watches both pages.</div>
     </div>
 
     <div class="field">
@@ -447,9 +453,12 @@
           <button class="btn-icon btn-delete" title="Delete" onclick="deleteItem('${p.id}')">🗑️</button>
         </div>
         <div class="card-name">${esc(p.name)}</div>
-        <a class="card-url" href="${esc(p.url)}" target="_blank" rel="noreferrer">
-          ${esc(p.url.replace('https://www.lululemon.com','lululemon.com'))}
+        <a class="card-url" href="${esc(p.urls[0])}" target="_blank" rel="noreferrer">
+          ${esc(p.urls[0].replace('https://www.lululemon.com','lululemon.com').replace('https://shop.lululemon.com','shop.lululemon.com'))}
         </a>
+        ${p.urls[1] ? `<a class="card-url" href="${esc(p.urls[1])}" target="_blank" rel="noreferrer" style="opacity:0.55">
+          Sale: ${esc(p.urls[1].replace('https://www.lululemon.com','lululemon.com').replace('https://shop.lululemon.com','shop.lululemon.com'))}
+        </a>` : ''}
         <div class="tags">
           ${p.sizes.map(s => `<span class="tag tag-size">${esc(s)}</span>`).join('')}
           ${p.max_price ? `<span class="tag tag-price">≤ $${p.max_price}</span>` : ''}
@@ -516,7 +525,8 @@
     document.getElementById('modal-title').textContent = editId ? 'Edit Item' : 'Add Item to Track';
     document.getElementById('save-btn').textContent    = editId ? 'Save Changes' : 'Add to Tracker';
     document.getElementById('f-name').value  = prefill ? prefill.name : '';
-    document.getElementById('f-url').value   = prefill ? prefill.url  : '';
+    document.getElementById('f-url').value   = prefill ? (prefill.urls ? prefill.urls[0] : prefill.url || '') : '';
+    document.getElementById('f-url2').value  = prefill && prefill.urls && prefill.urls[1] ? prefill.urls[1] : '';
     document.getElementById('f-price').value = prefill && prefill.max_price ? prefill.max_price : '';
 
     document.getElementById('url-error').classList.remove('show');
@@ -551,6 +561,7 @@
   function saveItem() {
     const name  = document.getElementById('f-name').value.trim();
     const url   = document.getElementById('f-url').value.trim();
+    const url2  = document.getElementById('f-url2').value.trim();
     const price = document.getElementById('f-price').value;
 
     let valid = true;
@@ -566,10 +577,12 @@
     if (!name) { document.getElementById('f-name').focus(); valid = false; }
     if (!valid) return;
 
+    const urls = [url];
+    if (url2 && url2.includes('lululemon.com')) urls.push(url2);
     const entry = {
       id:        editId || Date.now().toString(),
       name,
-      url,
+      urls,
       sizes:     [...selSizes],
       colors:    [...selColors],
       max_price: price ? parseFloat(price) : null,
@@ -598,8 +611,9 @@
 
   // ── Export ───────────────────────────────────────────────────────────────
   function toExport() {
-    return products.map(({ name, url, sizes, colors, max_price }) => ({
-      name, url, sizes,
+    return products.map(({ name, urls, sizes, colors, max_price }) => ({
+      name, urls,
+      sizes,
       ...(colors && colors.length ? { colors } : {}),
       max_price: max_price ?? null,
     }));
