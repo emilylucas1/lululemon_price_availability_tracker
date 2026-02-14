@@ -1,0 +1,52 @@
+name: Lululemon Sale Tracker
+
+on:
+  schedule:
+    # Runs every hour — adjust cron to your preference
+    # Format: minute hour day month weekday
+    # Current: top of every hour, 24/7
+    - cron: "0 * * * *"
+
+    # Uncomment below instead to only run Thu 11am ET (Lululemon restock day)
+    # - cron: "0 16 * * 4"   # 16:00 UTC = 11:00 AM ET
+
+  # Lets you trigger it manually from the GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  check-lululemon:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Restore previous state (so we only alert on changes)
+        uses: actions/cache@v4
+        with:
+          path: last_state.json
+          key: lululemon-state-${{ github.run_id }}
+          restore-keys: |
+            lululemon-state-
+
+      - name: Run tracker
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+        run: python tracker.py
+
+      - name: Save updated state
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: last_state.json
+          key: lululemon-state-${{ github.run_id }}
